@@ -1,99 +1,76 @@
 import cv2
 import numpy as np
-from typing import Tuple, Optional
+from transformers import pipeline
+from typing import Dict, Union, Tuple
 
 class MoodDetector:
     def __init__(self):
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        # Pre-trained emotion detection model path would go here
-        self.emotions = ['angry', 'happy', 'sad', 'neutral', 'surprised']
+        self.sentiment_analyzer = pipeline('sentiment-analysis')
         
-    def detect_mood_from_image(self, image_path: str) -> Tuple[str, float]:
-        """
-        Analyzes an image to detect the dominant mood/emotion.
-        Returns tuple of (mood, confidence_score)
-        """
-        try:
-            # Load and preprocess image
-            img = cv2.imread(image_path)
-            if img is None:
-                raise ValueError(f'Could not load image from {image_path}')
-            
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
-            
-            if len(faces) == 0:
-                return ('neutral', 0.0)
-                
-            # Process the first detected face
-            x, y, w, h = faces[0]
-            face_roi = gray[y:y+h, x:x+w]
-            
-            # Normalize and prepare face for emotion detection
-            face_roi = cv2.resize(face_roi, (48, 48))
-            face_roi = face_roi / 255.0
-            
-            # Here we would normally feed the processed face into an emotion detection model
-            # For demo purposes, returning mock results
-            mock_mood = self._mock_emotion_detection(face_roi)
-            return mock_mood
-            
-        except Exception as e:
-            print(f'Error detecting mood: {str(e)}')
-            return ('neutral', 0.0)
-            
-    def detect_mood_from_webcam(self) -> Optional[Tuple[str, float]]:
-        """
-        Captures and analyzes mood from webcam feed in real-time.
-        Returns tuple of (mood, confidence_score)
-        """
-        cap = cv2.VideoCapture(0)
-        
-        try:
-            ret, frame = cap.read()
-            if not ret:
-                return None
-                
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
-            
-            if len(faces) == 0:
-                return ('neutral', 0.0)
-                
-            # Process the first detected face
-            x, y, w, h = faces[0]
-            face_roi = gray[y:y+h, x:x+w]
-            
-            # Normalize and prepare face for emotion detection
-            face_roi = cv2.resize(face_roi, (48, 48))
-            face_roi = face_roi / 255.0
-            
-            mock_mood = self._mock_emotion_detection(face_roi)
-            return mock_mood
-            
-        except Exception as e:
-            print(f'Error detecting mood from webcam: {str(e)}')
-            return None
-            
-        finally:
-            cap.release()
-            
-    def _mock_emotion_detection(self, face_roi: np.ndarray) -> Tuple[str, float]:
-        """
-        Mock emotion detection - to be replaced with actual ML model.
-        """
-        # Simulate emotion detection with random selection
-        confidence = np.random.random()
-        mood = np.random.choice(self.emotions)
-        return (mood, confidence)
+        # Emotion mapping to musical characteristics
+        self.emotion_music_map = {
+            'happy': {'tempo': 'upbeat', 'mode': 'major', 'energy': 'high'},
+            'sad': {'tempo': 'slow', 'mode': 'minor', 'energy': 'low'},
+            'neutral': {'tempo': 'moderate', 'mode': 'major', 'energy': 'medium'},
+            'angry': {'tempo': 'fast', 'mode': 'minor', 'energy': 'high'}
+        }
 
-if __name__ == '__main__':
-    detector = MoodDetector()
-    
-    # Test image detection
-    result = detector.detect_mood_from_image('test.jpg')
-    print(f'Detected mood from image: {result}')
-    
-    # Test webcam detection
-    result = detector.detect_mood_from_webcam()
-    print(f'Detected mood from webcam: {result}')
+    def detect_facial_emotion(self, image: np.ndarray) -> Dict[str, float]:
+        """Detect emotion from facial expression in image."""
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
+        
+        if len(faces) == 0:
+            return {'neutral': 1.0}
+            
+        # For demo, using simple pixel intensity as proxy for emotion
+        face_x, face_y, face_w, face_h = faces[0]
+        face_roi = gray[face_y:face_y+face_h, face_x:face_x+face_w]
+        avg_intensity = np.mean(face_roi)
+        
+        # Simple mapping of intensity to emotions
+        if avg_intensity > 150:
+            return {'happy': 0.8, 'neutral': 0.2}
+        elif avg_intensity < 100:
+            return {'sad': 0.7, 'neutral': 0.3}
+        else:
+            return {'neutral': 0.6, 'happy': 0.2, 'sad': 0.2}
+
+    def analyze_text_sentiment(self, text: str) -> Dict[str, float]:
+        """Analyze emotion from text input."""
+        result = self.sentiment_analyzer(text)
+        sentiment = result[0]
+        
+        if sentiment['label'] == 'POSITIVE':
+            return {'happy': sentiment['score'], 'neutral': 1 - sentiment['score']}
+        else:
+            return {'sad': sentiment['score'], 'neutral': 1 - sentiment['score']}
+
+    def combine_emotions(self, facial: Dict[str, float], textual: Dict[str, float]) -> Dict[str, float]:
+        """Combine emotions from different modalities with weights."""
+        combined = {}
+        # Weight facial expressions more heavily (0.6) than text (0.4)
+        for emotion, score in facial.items():
+            combined[emotion] = score * 0.6
+        for emotion, score in textual.items():
+            if emotion in combined:
+                combined[emotion] += score * 0.4
+            else:
+                combined[emotion] = score * 0.4
+        return combined
+
+    def get_musical_parameters(self, emotions: Dict[str, float]) -> Dict[str, str]:
+        """Convert emotions to musical parameters."""
+        dominant_emotion = max(emotions.items(), key=lambda x: x[1])[0]
+        return self.emotion_music_map.get(dominant_emotion, self.emotion_music_map['neutral'])
+
+    def analyze_mood(self, image: np.ndarray, text: str = '') -> Tuple[Dict[str, float], Dict[str, str]]:
+        """Main method to analyze mood from both image and text."""
+        facial_emotions = self.detect_facial_emotion(image)
+        text_emotions = self.analyze_text_sentiment(text) if text else {'neutral': 1.0}
+        
+        combined_emotions = self.combine_emotions(facial_emotions, text_emotions)
+        musical_params = self.get_musical_parameters(combined_emotions)
+        
+        return combined_emotions, musical_params
